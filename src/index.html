@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TableTalk</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <!-- Auth Screen -->
+    <div id="auth-screen" class="auth-screen">
+      <div class="auth-container">
+        <div class="auth-logo">TableTalk</div>
+        
+        <!-- Login Form -->
+        <div id="login-form" class="auth-form">
+          <h2>Login</h2>
+          <input type="email" id="login-email" placeholder="Email" class="auth-input">
+          <input type="password" id="login-password" placeholder="Password" class="auth-input">
+          <button id="login-btn" class="auth-btn">Login</button>
+          <p class="auth-switch">
+            Don't have an account? <a href="#" id="to-register">Register</a>
+          </p>
+        </div>
+        
+        <!-- Register Form -->
+        <div id="register-form" class="auth-form hidden">
+          <h2>Register</h2>
+          <input type="text" id="register-username" placeholder="Username" class="auth-input">
+          <input type="email" id="register-email" placeholder="Email" class="auth-input">
+          <input type="password" id="register-password" placeholder="Password" class="auth-input">
+          <input type="password" id="register-password-confirm" placeholder="Confirm Password" class="auth-input">
+          <button id="register-btn" class="auth-btn">Register</button>
+          <p class="auth-switch">
+            Already have an account? <a href="#" id="to-login">Login</a>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="hidden">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="logo">TableTalk</div>
+        <nav class="nav">
+          <button class="nav-item active" data-view="timeline">
+            <span>🏠</span> Timeline
+          </button>
+          <button class="nav-item" data-view="channels">
+            <span>💬</span> Channels
+          </button>
+          <button class="nav-item" data-view="profile">
+            <span>👤</span> Profile
+          </button>
+        </nav>
+        <div class="user-section">
+          <div class="user-avatar" id="current-user-avatar">U</div>
+          <div class="user-name" id="current-user-name">@user</div>
+          <button id="logout-btn" class="logout-btn">Logout</button>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <!-- Timeline View -->
+        <div id="timeline-view" class="view active">
+          <div class="post-composer">
+            <textarea id="post-input" placeholder="What's happening?"></textarea>
+            <div class="composer-actions">
+              <button id="post-btn">Post</button>
+            </div>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </div>
+
+        <!-- Channels View -->
+        <div id="channels-view" class="view">
+          <div class="channels-sidebar">
+            <div class="channel-list">
+              <div class="channel-item active" data-channel="general"># general</div>
+              <div class="channel-item" data-channel="random"># random</div>
+              <div class="channel-item" data-channel="voice"># voice</div>
+            </div>
+          </div>
+          <div class="chat-area">
+            <div class="chat-header">
+              <span id="current-channel"># general</span>
+              <button id="call-btn" class="call-btn">📞 Call</button>
+            </div>
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input">
+              <input type="text" id="chat-input" placeholder="Message #general">
+              <button id="send-chat">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile View -->
+        <div id="profile-view" class="view">
+          <div class="profile-header">
+            <div class="profile-avatar">U</div>
+            <h2>@user</h2>
+            <p>Lightweight SNS user</p>
+          </div>
+          <div id="user-posts" class="user-posts"></div>
+        </div>
+      </main>
+
+      <!-- Call Modal -->
+      <div id="call-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="call-header">
+            <h3>📞 Voice Call</h3>
+            <button class="close-btn" id="close-call">×</button>
+          </div>
+          <div class="call-status" id="call-status">Ready to call</div>
+          <div class="call-controls">
+            <button id="start-call" class="call-control">Start Call</button>
+            <button id="end-call" class="call-control end">End Call</button>
+          </div>
+          <div class="video-area">
+            <video id="local-video" autoplay muted playsinline></video>
+            <video id="remote-video" autoplay playsinline></video>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script type="module" src="/main.js" defer></script>
+  </body>
+</html>
