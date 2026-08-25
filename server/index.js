@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,8 +33,25 @@ function findUser(id) {
   return users.find(u => u.id === Number(id));
 }
 
+function findUserByToken(token) {
+  return users.find(u => u.token === token);
+}
+
 function avatarFor(username) {
   return (username?.charAt(0) || '?').toUpperCase();
+}
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function toSafeUser(user) {
+  const { passwordHash, salt, token, ...safe } = user;
+  return safe;
 }
 
 // REST API
@@ -45,10 +63,12 @@ app.post('/api/register', (req, res) => {
   if (users.some(u => u.email === email)) {
     return res.status(409).json({ error: 'Email already registered' });
   }
-  const user = { id: nextUserId++, username, email, password, avatar: avatarFor(username) };
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = hashPassword(password, salt);
+  const token = generateToken();
+  const user = { id: nextUserId++, username, email, passwordHash, salt, token, avatar: avatarFor(username) };
   users.push(user);
-  const { password: _, ...safeUser } = user;
-  res.status(201).json(safeUser);
+  res.status(201).json({ ...toSafeUser(user), token });
 });
 
 app.post('/api/login', (req, res) => {
@@ -56,30 +76,40 @@ app.post('/api/login', (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: 'Missing fields' });
   }
-  const user = users.find(u => u.email === email && u.password === password);
-  if (!user) {
+  const user = users.find(u => u.email === email);
+  if (!user || user.passwordHash !== hashPassword(password, user.salt)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  const { password: _, ...safeUser } = user;
-  res.json(safeUser);
+  res.json({ ...toSafeUser(user), token: user.token });
 });
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  const user = token ? findUserByToken(token) : null;
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  req.user = user;
+  next();
+}
 
 app.get('/api/posts', (_req, res) => {
   const sorted = [...posts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   res.json(sorted);
 });
 
-app.post('/api/posts', (req, res) => {
-  const { user_id, content } = req.body;
-  if (!user_id || !content?.trim()) {
+app.post('/api/posts', requireAuth, (req, res) => {
+  const { content } = req.body;
+  if (!content?.trim()) {
     return res.status(400).json({ error: 'Missing fields' });
   }
-  const user = findUser(user_id);
+  const user = req.user;
   const post = {
     id: nextPostId++,
-    user_id: Number(user_id),
-    username: user?.username || 'unknown',
-    avatar: user?.avatar || avatarFor(user?.username),
+    user_id: user.id,
+    username: user.username,
+    avatar: user.avatar || avatarFor(user.username),
     content: content.trim(),
     likes: 0,
     created_at: now()
@@ -97,11 +127,11 @@ app.put('/api/posts/:id/like', (req, res) => {
   res.json(post);
 });
 
-app.put('/api/posts/:id', (req, res) => {
+app.put('/api/posts/:id', requireAuth, (req, res) => {
   const post = posts.find(p => p.id === Number(req.params.id));
   if (!post) return res.status(404).json({ error: 'Post not found' });
-  const { user_id, content } = req.body;
-  if (post.user_id !== Number(user_id)) {
+  const { content } = req.body;
+  if (post.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Not allowed' });
   }
   if (!content?.trim()) return res.status(400).json({ error: 'Empty content' });
@@ -111,11 +141,11 @@ app.put('/api/posts/:id', (req, res) => {
   res.json(post);
 });
 
-app.delete('/api/posts/:id', (req, res) => {
+app.delete('/api/posts/:id', requireAuth, (req, res) => {
   const idx = posts.findIndex(p => p.id === Number(req.params.id));
   if (idx === -1) return res.status(404).json({ error: 'Post not found' });
   const post = posts[idx];
-  if (post.user_id !== Number(req.body.user_id)) {
+  if (post.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Not allowed' });
   }
   posts.splice(idx, 1);
@@ -134,20 +164,20 @@ app.get('/api/messages/:channel', (req, res) => {
   res.json(channelMessages);
 });
 
-app.post('/api/messages', (req, res) => {
-  const { user_id, channel, content } = req.body;
-  if (!user_id || !channel || !content?.trim()) {
+app.post('/api/messages', requireAuth, (req, res) => {
+  const { channel, content } = req.body;
+  if (!channel || !content?.trim()) {
     return res.status(400).json({ error: 'Missing fields' });
   }
   if (!channels.includes(channel)) {
     return res.status(404).json({ error: 'Channel not found' });
   }
-  const user = findUser(user_id);
+  const user = req.user;
   const message = {
     id: nextMessageId++,
-    user_id: Number(user_id),
-    username: user?.username || 'unknown',
-    avatar: user?.avatar || avatarFor(user?.username),
+    user_id: user.id,
+    username: user.username,
+    avatar: user.avatar || avatarFor(user.username),
     channel,
     content: content.trim(),
     created_at: now()
@@ -161,7 +191,7 @@ app.get('/api/channels', (_req, res) => {
   res.json(channels);
 });
 
-app.post('/api/channels', (req, res) => {
+app.post('/api/channels', requireAuth, (req, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Missing name' });
   const normalized = name.trim().toLowerCase().replace(/\s+/g, '-');
@@ -169,7 +199,7 @@ app.post('/api/channels', (req, res) => {
     return res.status(409).json({ error: 'Channel already exists' });
   }
   channels.push(normalized);
-  io.emit('channel_created', normalized);
+  io.emit('channel_created', { name: normalized });
   res.status(201).json({ name: normalized });
 });
 
@@ -185,8 +215,7 @@ app.get('/api/users/:id/posts', (req, res) => {
 app.get('/api/users/:id', (req, res) => {
   const user = findUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { password: _, ...safeUser } = user;
-  res.json(safeUser);
+  res.json(toSafeUser(user));
 });
 
 app.get('/api/search', (req, res) => {
