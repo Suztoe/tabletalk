@@ -18,12 +18,22 @@ const state = {
   },
   socket: null,
   channels: [],
+  pendingChannel: null,
+  uiInitialized: false,
   webRTC: {
     peerConnection: null,
     localStream: null,
     remoteStream: null
   }
 };
+
+function authHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.currentUser?.token) {
+    headers['Authorization'] = `Bearer ${state.currentUser.token}`;
+  }
+  return headers;
+}
 
 function escapeHtml(text) {
   if (text == null) return '';
@@ -220,7 +230,7 @@ function showAuth() {
 function showApp() {
   elements.authScreen.classList.add('hidden');
   elements.app.classList.remove('hidden');
-  
+
   // Update user info in sidebar
   const userInitial = (state.currentUser.username?.charAt(0) || '?').toUpperCase();
   const userHandle = '@' + (state.currentUser.username || 'user');
@@ -231,18 +241,24 @@ function showApp() {
   document.querySelector('.profile-avatar').textContent = userInitial;
   const profileHeading = document.querySelector('#profile-view h2');
   if (profileHeading) profileHeading.textContent = userHandle;
-  
+
   // Initialize socket connection
   initSocket();
 
-  // Initialize app features after authentication
-  initNavigation();
-  initTimeline();
-  initChannels();
-  initWebRTC();
-  initProfile();
-  initSearch();
-  initMobileNav();
+  if (!state.uiInitialized) {
+    // Attach DOM listeners once; data refreshes on subsequent logins
+    initNavigation();
+    initTimeline();
+    initChannels();
+    initWebRTC();
+    initProfile();
+    initSearch();
+    initMobileNav();
+    state.uiInitialized = true;
+  } else {
+    loadPosts();
+    loadChannels();
+  }
 }
 
 function logout() {
@@ -309,13 +325,13 @@ function initSocket() {
     }
   });
 
-  state.socket.on('channel_created', (channel) => {
-    if (!state.channels.includes(channel)) {
-      state.channels.push(channel);
-      state.chats[channel] = [];
-      renderChannelList();
-      showToast(`Channel #${channel} created`);
-    }
+  state.socket.on('channel_created', (data) => {
+    const name = typeof data === 'string' ? data : data?.name;
+    if (!name || state.pendingChannel === name || state.channels.includes(name)) return;
+    state.channels.push(name);
+    state.chats[name] = [];
+    renderChannelList();
+    showToast(`Channel #${name} created`);
   });
 
   state.socket.on('disconnect', () => {
@@ -380,15 +396,12 @@ async function loadPosts() {
 async function createPost() {
   const content = elements.postInput.value.trim();
   if (!content) return;
-  
+
   try {
     const response = await fetch(`${API_BASE}/posts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: state.currentUser.id,
-        content: content
-      })
+      headers: authHeaders(),
+      body: JSON.stringify({ content })
     });
     
     if (response.ok) {
@@ -453,8 +466,7 @@ async function deletePost(postId) {
   try {
     const response = await fetch(`${API_BASE}/posts/${postId}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: state.currentUser.id })
+      headers: authHeaders()
     });
 
     if (!response.ok) {
@@ -510,10 +522,11 @@ async function createChannel(e) {
   const name = elements.newChannelName.value.trim().toLowerCase().replace(/\s+/g, '-');
   if (!name) return;
 
+  state.pendingChannel = name;
   try {
     const response = await fetch(`${API_BASE}/channels`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ name })
     });
 
@@ -533,6 +546,8 @@ async function createChannel(e) {
   } catch (error) {
     console.error('Error creating channel:', error);
     alert('Connection error');
+  } finally {
+    state.pendingChannel = null;
   }
 }
 
@@ -566,13 +581,12 @@ async function loadMessages(channel) {
 async function sendChatMessage() {
   const content = elements.chatInput.value.trim();
   if (!content) return;
-  
+
   try {
     const response = await fetch(`${API_BASE}/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
-        user_id: state.currentUser.id,
         channel: state.currentChannel,
         content: content
       })
