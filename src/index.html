@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <div id="toast" class="toast hidden"></div>
+
     <!-- Auth Screen -->
     <div id="auth-screen" class="auth-screen">
       <div class="auth-container">
@@ -40,8 +42,9 @@
 
     <!-- Main App -->
     <div id="app" class="hidden">
+      <button id="menu-toggle" class="menu-toggle" aria-label="Open menu">☰</button>
       <!-- Sidebar -->
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
         <div class="logo">TableTalk</div>
         <nav class="nav">
           <button class="nav-item active" data-view="timeline">
@@ -52,6 +55,9 @@
           </button>
           <button class="nav-item" data-view="profile">
             <span>👤</span> Profile
+          </button>
+          <button class="nav-item" data-view="search">
+            <span>🔍</span> Search
           </button>
         </nav>
         <div class="user-section">
@@ -77,11 +83,15 @@
         <!-- Channels View -->
         <div id="channels-view" class="view">
           <div class="channels-sidebar">
-            <div class="channel-list">
+            <div class="channel-list" id="channel-list">
               <div class="channel-item active" data-channel="general"># general</div>
               <div class="channel-item" data-channel="random"># random</div>
               <div class="channel-item" data-channel="voice"># voice</div>
             </div>
+            <form id="create-channel-form" class="create-channel-form">
+              <input type="text" id="new-channel-name" placeholder="new-channel" class="channel-input">
+              <button type="submit" class="channel-add-btn">+</button>
+            </form>
           </div>
           <div class="chat-area">
             <div class="chat-header">
@@ -105,6 +115,17 @@
           </div>
           <div id="user-posts" class="user-posts"></div>
         </div>
+
+        <!-- Search View -->
+        <div id="search-view" class="view">
+          <div class="search-header">
+            <input type="text" id="search-input" placeholder="Search posts and messages..." class="search-input">
+            <button id="search-btn" class="search-btn">Search</button>
+          </div>
+          <div id="search-results" class="search-results">
+            <p class="empty-state">Enter a keyword to search.</p>
+          </div>
+        </div>
       </main>
 
       <!-- Call Modal -->
@@ -127,7 +148,8 @@
       </div>
     </div>
 
+    <div id="sidebar-overlay" class="sidebar-overlay"></div>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script type="module" src="/main.js" defer></script>
+    <script type="module" src="main.js" defer></script>
   </body>
 </html>
