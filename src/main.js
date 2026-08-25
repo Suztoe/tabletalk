@@ -1,7 +1,8 @@
 // TableTalk - Lightweight X+Discord-like SNS with P2P WebRTC calling
 // Built with Tauri for maximum lightweight performance
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = window.__TAURI__ ? 'http://localhost:3000/api' : '/api';
+const SOCKET_URL = window.__TAURI__ ? 'http://localhost:3000' : undefined;
 
 // State Management
 const state = {
@@ -16,12 +17,23 @@ const state = {
     voice: []
   },
   socket: null,
+  channels: [],
   webRTC: {
     peerConnection: null,
     localStream: null,
     remoteStream: null
   }
 };
+
+function escapeHtml(text) {
+  if (text == null) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // DOM Elements
 const elements = {
@@ -59,7 +71,17 @@ const elements = {
   endCall: document.getElementById('end-call'),
   callStatus: document.getElementById('call-status'),
   localVideo: document.getElementById('local-video'),
-  remoteVideo: document.getElementById('remote-video')
+  remoteVideo: document.getElementById('remote-video'),
+  searchInput: document.getElementById('search-input'),
+  searchBtn: document.getElementById('search-btn'),
+  searchResults: document.getElementById('search-results'),
+  channelList: document.getElementById('channel-list'),
+  createChannelForm: document.getElementById('create-channel-form'),
+  newChannelName: document.getElementById('new-channel-name'),
+  menuToggle: document.getElementById('menu-toggle'),
+  sidebar: document.getElementById('sidebar'),
+  sidebarOverlay: document.getElementById('sidebar-overlay'),
+  toast: document.getElementById('toast')
 };
 
 // Authentication
@@ -67,9 +89,15 @@ function initAuth() {
   // Check if user is already logged in
   const savedUser = localStorage.getItem('tabletalk_current_user');
   if (savedUser) {
-    state.currentUser = JSON.parse(savedUser);
-    state.isAuthenticated = true;
-    showApp();
+    try {
+      state.currentUser = JSON.parse(savedUser);
+      state.isAuthenticated = true;
+      showApp();
+    } catch (e) {
+      console.error('Failed to restore session', e);
+      localStorage.removeItem('tabletalk_current_user');
+      showAuth();
+    }
   } else {
     showAuth();
   }
@@ -194,18 +222,27 @@ function showApp() {
   elements.app.classList.remove('hidden');
   
   // Update user info in sidebar
-  elements.currentUserAvatar.textContent = state.currentUser.username.charAt(0).toUpperCase();
-  elements.currentUserName.textContent = '@' + state.currentUser.username;
+  const userInitial = (state.currentUser.username?.charAt(0) || '?').toUpperCase();
+  const userHandle = '@' + (state.currentUser.username || 'user');
+  elements.currentUserAvatar.textContent = userInitial;
+  elements.currentUserName.textContent = userHandle;
+
+  // Update profile header
+  document.querySelector('.profile-avatar').textContent = userInitial;
+  const profileHeading = document.querySelector('#profile-view h2');
+  if (profileHeading) profileHeading.textContent = userHandle;
   
   // Initialize socket connection
   initSocket();
-  
+
   // Initialize app features after authentication
   initNavigation();
   initTimeline();
   initChannels();
   initWebRTC();
   initProfile();
+  initSearch();
+  initMobileNav();
 }
 
 function logout() {
@@ -227,18 +264,18 @@ function logout() {
 
 // Socket.io connection
 function initSocket() {
-  state.socket = io('http://localhost:3000');
-  
+  state.socket = io(SOCKET_URL);
+
   state.socket.on('connect', () => {
     console.log('Connected to server');
     state.socket.emit('join_channel', state.currentChannel);
   });
-  
+
   state.socket.on('new_post', (post) => {
     state.posts.unshift(post);
     renderTimeline();
   });
-  
+
   state.socket.on('post_liked', (post) => {
     const index = state.posts.findIndex(p => p.id === post.id);
     if (index !== -1) {
@@ -246,7 +283,22 @@ function initSocket() {
       renderTimeline();
     }
   });
-  
+
+  state.socket.on('post_edited', (post) => {
+    const index = state.posts.findIndex(p => p.id === post.id);
+    if (index !== -1) {
+      state.posts[index] = post;
+      renderTimeline();
+      loadUserPosts();
+    }
+  });
+
+  state.socket.on('post_deleted', (postId) => {
+    state.posts = state.posts.filter(p => p.id !== postId);
+    renderTimeline();
+    loadUserPosts();
+  });
+
   state.socket.on('new_message', (message) => {
     if (!state.chats[message.channel]) {
       state.chats[message.channel] = [];
@@ -256,7 +308,16 @@ function initSocket() {
       renderChat();
     }
   });
-  
+
+  state.socket.on('channel_created', (channel) => {
+    if (!state.channels.includes(channel)) {
+      state.channels.push(channel);
+      state.chats[channel] = [];
+      renderChannelList();
+      showToast(`Channel #${channel} created`);
+    }
+  });
+
   state.socket.on('disconnect', () => {
     console.log('Disconnected from server');
   });
@@ -274,20 +335,35 @@ function initNavigation() {
 
 function switchView(viewName) {
   state.currentView = viewName;
-  
+
   elements.navItems.forEach(item => {
     item.classList.toggle('active', item.dataset.view === viewName);
   });
-  
+
   elements.views.forEach(view => {
     view.classList.toggle('active', view.id === `${viewName}-view`);
   });
+
+  if (viewName === 'profile') loadUserPosts();
 }
 
 // Timeline/Posts
 async function initTimeline() {
   elements.postBtn.addEventListener('click', createPost);
+  elements.postInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) createPost();
+  });
+  elements.timeline.addEventListener('click', handleTimelineClick);
   await loadPosts();
+}
+
+function handleTimelineClick(e) {
+  const actionEl = e.target.closest('.post-action[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+  const postId = Number(actionEl.dataset.id);
+  if (action === 'like') likePost(postId);
+  if (action === 'delete') deletePost(postId);
 }
 
 async function loadPosts() {
@@ -328,23 +404,32 @@ async function createPost() {
 }
 
 function renderTimeline() {
-  elements.timeline.innerHTML = state.posts.map(post => `
-    <div class="post">
+  if (!state.posts.length) {
+    elements.timeline.innerHTML = '<p class="empty-state">No posts yet. Start the conversation!</p>';
+    return;
+  }
+
+  elements.timeline.innerHTML = state.posts.map(post => {
+    const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
+    const isOwn = post.user_id === state.currentUser?.id;
+    return `
+    <div class="post" data-id="${post.id}">
       <div class="post-header">
-        <div class="post-avatar">${post.avatar}</div>
+        <div class="post-avatar">${avatar}</div>
         <div>
-          <strong>@${post.username}</strong>
+          <strong>@${escapeHtml(post.username)}</strong>
           <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(post.created_at))}</span>
         </div>
       </div>
-      <div class="post-content">${post.content}</div>
+      <div class="post-content">${escapeHtml(post.content)}</div>
       <div class="post-actions">
-        <span class="post-action" onclick="likePost(${post.id})">❤️ ${post.likes}</span>
+        <span class="post-action" data-action="like" data-id="${post.id}">❤️ ${post.likes}</span>
         <span class="post-action">💬 Reply</span>
         <span class="post-action">🔄 Share</span>
+        ${isOwn ? `<span class="post-action" data-action="delete" data-id="${post.id}">🗑️ Delete</span>` : ''}
       </div>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 async function likePost(postId) {
@@ -352,11 +437,10 @@ async function likePost(postId) {
     const response = await fetch(`${API_BASE}/posts/${postId}/like`, {
       method: 'PUT'
     });
-    
-    if (response.ok) {
-      // Post will be updated via socket event
-    } else {
-      alert('Failed to like post');
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to like post');
     }
   } catch (error) {
     console.error('Error liking post:', error);
@@ -364,36 +448,107 @@ async function likePost(postId) {
   }
 }
 
-// Channels/Chat
-function initChannels() {
-  elements.channelItems.forEach(item => {
-    item.addEventListener('click', () => {
-      const channel = item.dataset.channel;
-      switchChannel(channel);
+async function deletePost(postId) {
+  if (!confirm('Delete this post?')) return;
+  try {
+    const response = await fetch(`${API_BASE}/posts/${postId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: state.currentUser.id })
     });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete post');
+    }
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    alert('Connection error');
+  }
+}
+
+// Channels/Chat
+async function initChannels() {
+  await loadChannels();
+
+  elements.channelList.addEventListener('click', (e) => {
+    const item = e.target.closest('.channel-item');
+    if (!item) return;
+    switchChannel(item.dataset.channel);
   });
-  
+
+  elements.createChannelForm.addEventListener('submit', createChannel);
+
   elements.sendChat.addEventListener('click', sendChatMessage);
   elements.chatInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendChatMessage();
   });
 }
 
+async function loadChannels() {
+  try {
+    const response = await fetch(`${API_BASE}/channels`);
+    state.channels = await response.json();
+    state.channels.forEach(c => {
+      if (!state.chats[c]) state.chats[c] = [];
+    });
+    renderChannelList();
+  } catch (error) {
+    console.error('Error loading channels:', error);
+  }
+}
+
+function renderChannelList() {
+  if (!elements.channelList) return;
+  elements.channelList.innerHTML = state.channels.map(channel => `
+    <div class="channel-item ${channel === state.currentChannel ? 'active' : ''}" data-channel="${channel}"># ${escapeHtml(channel)}</div>
+  `).join('');
+}
+
+async function createChannel(e) {
+  e.preventDefault();
+  const name = elements.newChannelName.value.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!name) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+
+    if (response.ok) {
+      elements.newChannelName.value = '';
+      const { name: channel } = await response.json();
+      if (!state.channels.includes(channel)) {
+        state.channels.push(channel);
+        state.chats[channel] = [];
+      }
+      switchChannel(channel);
+      showToast(`Channel #${channel} created`);
+    } else {
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to create channel');
+    }
+  } catch (error) {
+    console.error('Error creating channel:', error);
+    alert('Connection error');
+  }
+}
+
 async function switchChannel(channelName) {
   state.currentChannel = channelName;
-  
-  elements.channelItems.forEach(item => {
-    item.classList.toggle('active', item.dataset.channel === channelName);
-  });
-  
+
+  renderChannelList();
+
   elements.currentChannel.textContent = `# ${channelName}`;
   elements.chatInput.placeholder = `Message #${channelName}`;
-  
+
   // Emit socket event to join channel
   if (state.socket) {
     state.socket.emit('join_channel', channelName);
   }
-  
+
   await loadMessages(channelName);
 }
 
@@ -439,12 +594,12 @@ function renderChat() {
   const messages = state.chats[state.currentChannel] || [];
   elements.chatMessages.innerHTML = messages.map(msg => `
     <div class="chat-message">
-      <span class="author">@${msg.username}</span>
-      <span>${msg.content}</span>
+      <span class="author">@${escapeHtml(msg.username)}</span>
+      <span>${escapeHtml(msg.content)}</span>
       <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(msg.created_at))}</span>
     </div>
   `).join('');
-  
+
   elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
 }
 
@@ -562,44 +717,145 @@ async function initProfile() {
 }
 
 async function loadUserPosts() {
+  const userPosts = document.getElementById('user-posts');
   try {
+    if (!state.currentUser?.id) {
+      userPosts.innerHTML = '<p class="empty-state">No user data available.</p>';
+      return;
+    }
     const response = await fetch(`${API_BASE}/users/${state.currentUser.id}/posts`);
+    if (!response.ok) throw new Error('Failed to load user posts');
     const posts = await response.json();
-    const userPosts = document.getElementById('user-posts');
-    userPosts.innerHTML = posts.map(post => `
+    if (!posts.length) {
+      userPosts.innerHTML = '<p class="empty-state">No posts yet.</p>';
+      return;
+    }
+    userPosts.innerHTML = posts.map(post => {
+      const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
+      return `
       <div class="post">
         <div class="post-header">
-          <div class="post-avatar">${post.avatar}</div>
+          <div class="post-avatar">${avatar}</div>
           <div>
-            <strong>@${post.username}</strong>
+            <strong>@${escapeHtml(post.username)}</strong>
             <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(post.created_at))}</span>
           </div>
         </div>
-        <div class="post-content">${post.content}</div>
+        <div class="post-content">${escapeHtml(post.content)}</div>
         <div class="post-actions">
           <span class="post-action">❤️ ${post.likes}</span>
         </div>
       </div>
-    `).join('');
+    `}).join('');
   } catch (error) {
     console.error('Error loading user posts:', error);
   }
 }
 
+// Search
+function initSearch() {
+  elements.searchBtn.addEventListener('click', performSearch);
+  elements.searchInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') performSearch();
+  });
+}
+
+async function performSearch() {
+  const q = elements.searchInput.value.trim();
+  if (!q) {
+    elements.searchResults.innerHTML = '<p class="empty-state">Enter a keyword to search.</p>';
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
+    if (!response.ok) throw new Error('Search failed');
+    const data = await response.json();
+    renderSearchResults(data, q);
+  } catch (error) {
+    console.error('Search error:', error);
+    elements.searchResults.innerHTML = '<p class="empty-state">Search failed. Try again.</p>';
+  }
+}
+
+function renderSearchResults(data, q) {
+  const postResults = data.posts || [];
+  const messageResults = data.messages || [];
+
+  let html = '';
+  if (!postResults.length && !messageResults.length) {
+    html = '<p class="empty-state">No results found.</p>';
+  } else {
+    if (postResults.length) {
+      html += '<h3 class="search-section">Posts</h3>' + postResults.map(post => {
+        const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
+        return `
+        <div class="post">
+          <div class="post-header">
+            <div class="post-avatar">${avatar}</div>
+            <div>
+              <strong>@${escapeHtml(post.username)}</strong>
+              <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(post.created_at))}</span>
+            </div>
+          </div>
+          <div class="post-content">${escapeHtml(post.content)}</div>
+          <div class="post-actions">
+            <span class="post-action">❤️ ${post.likes}</span>
+          </div>
+        </div>
+        `;
+      }).join('');
+    }
+    if (messageResults.length) {
+      html += '<h3 class="search-section">Messages</h3>' + messageResults.map(msg => `
+        <div class="chat-message">
+          <span class="author">#${escapeHtml(msg.channel)} @${escapeHtml(msg.username)}</span>
+          <span>${escapeHtml(msg.content)}</span>
+          <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(msg.created_at))}</span>
+        </div>
+      `).join('');
+    }
+  }
+  elements.searchResults.innerHTML = html;
+}
+
+// Mobile navigation
+function initMobileNav() {
+  if (!elements.menuToggle || !elements.sidebar || !elements.sidebarOverlay) return;
+
+  elements.menuToggle.addEventListener('click', () => {
+    elements.sidebar.classList.toggle('open');
+    elements.sidebarOverlay.classList.toggle('open');
+  });
+
+  elements.sidebarOverlay.addEventListener('click', () => {
+    elements.sidebar.classList.remove('open');
+    elements.sidebarOverlay.classList.remove('open');
+  });
+
+  elements.navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      elements.sidebar.classList.remove('open');
+      elements.sidebarOverlay.classList.remove('open');
+    });
+  });
+}
+
+// Toast notifications
+function showToast(message, duration = 3000) {
+  if (!elements.toast) return;
+  elements.toast.textContent = message;
+  elements.toast.classList.remove('hidden');
+  setTimeout(() => {
+    elements.toast.classList.add('hidden');
+  }, duration);
+}
+
 // Initialize App
 function init() {
-  // Initialize authentication first
+  // Initialize authentication first; showApp will set up the rest after login
   initAuth();
-  
-  // Initialize app features (only if authenticated)
-  if (state.isAuthenticated) {
-    initNavigation();
-    initTimeline();
-    initChannels();
-    initWebRTC();
-    initProfile();
-  }
-  
+
   console.log('TableTalk initialized successfully');
 }
 
