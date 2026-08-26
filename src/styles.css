@@ -291,6 +291,46 @@ body {
   color: #e94560;
 }
 
+.post.reletter {
+  border-left: 3px solid #e94560;
+}
+
+.reletter-header {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.markdown-content strong {
+  font-weight: bold;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content s {
+  text-decoration: line-through;
+}
+
+.markdown-content code {
+  background: #0f3460;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.markdown-content a {
+  color: #e94560;
+  text-decoration: underline;
+}
+
+.markdown-content br {
+  display: block;
+  margin-bottom: 4px;
+  content: '';
+}
+
 /* Channels */
 #channels-view {
   display: none;
