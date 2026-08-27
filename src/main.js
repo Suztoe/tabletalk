@@ -45,6 +45,26 @@ function escapeHtml(text) {
     .replace(/'/g, '&#039;');
 }
 
+function renderMarkdown(text) {
+  if (text == null) return '';
+  let html = escapeHtml(text);
+
+  const codes = [];
+  html = html.replace(/`([^`]+)`/g, (match, code) => {
+    codes.push(`<code>${code}</code>`);
+    return `___CODE_${codes.length - 1}___`;
+  });
+
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  html = html.replace(/\n/g, '<br>');
+
+  html = html.replace(/___CODE_(\d+)___/g, (_, i) => codes[i]);
+  return html;
+}
+
 // DOM Elements
 const elements = {
   authScreen: document.getElementById('auth-screen'),
@@ -315,6 +335,14 @@ function initSocket() {
     loadUserPosts();
   });
 
+  state.socket.on('post_relettered', ({ id, reletters }) => {
+    const post = state.posts.find(p => p.id === id);
+    if (post) {
+      post.reletters = reletters;
+      renderTimeline();
+    }
+  });
+
   state.socket.on('new_message', (message) => {
     if (!state.chats[message.channel]) {
       state.chats[message.channel] = [];
@@ -363,7 +391,7 @@ function switchView(viewName) {
   if (viewName === 'profile') loadUserPosts();
 }
 
-// Timeline/Posts
+// Timeline/Letters
 async function initTimeline() {
   elements.postBtn.addEventListener('click', createPost);
   elements.postInput.addEventListener('keydown', (e) => {
@@ -380,6 +408,7 @@ function handleTimelineClick(e) {
   const postId = Number(actionEl.dataset.id);
   if (action === 'like') likePost(postId);
   if (action === 'delete') deletePost(postId);
+  if (action === 'reletter') reletterPost(postId);
 }
 
 async function loadPosts() {
@@ -389,7 +418,7 @@ async function loadPosts() {
     state.posts = posts;
     renderTimeline();
   } catch (error) {
-    console.error('Error loading posts:', error);
+    console.error('Error loading letters:', error);
   }
 }
 
@@ -406,27 +435,29 @@ async function createPost() {
     
     if (response.ok) {
       elements.postInput.value = '';
-      // Post will be added via socket event
+      // Letter will be added via socket event
     } else {
-      alert('Failed to create post');
+      alert('Failed to create letter');
     }
   } catch (error) {
-    console.error('Error creating post:', error);
+    console.error('Error creating letter:', error);
     alert('Connection error');
   }
 }
 
 function renderTimeline() {
   if (!state.posts.length) {
-    elements.timeline.innerHTML = '<p class="empty-state">No posts yet. Start the conversation!</p>';
+    elements.timeline.innerHTML = '<p class="empty-state">No letters yet. Start the conversation!</p>';
     return;
   }
 
   elements.timeline.innerHTML = state.posts.map(post => {
     const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
     const isOwn = post.user_id === state.currentUser?.id;
+    const isReletter = post.type === 'reletter';
+    const reletterHeader = isReletter ? `<div class="reletter-header">🔁 Reletter from @${escapeHtml(post.original_username || '')}</div>` : '';
     return `
-    <div class="post" data-id="${post.id}">
+    <div class="post ${isReletter ? 'reletter' : ''}" data-id="${post.id}">
       <div class="post-header">
         <div class="post-avatar">${avatar}</div>
         <div>
@@ -434,11 +465,12 @@ function renderTimeline() {
           <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(post.created_at))}</span>
         </div>
       </div>
+      ${reletterHeader}
       <div class="post-content">${escapeHtml(post.content)}</div>
       <div class="post-actions">
         <span class="post-action" data-action="like" data-id="${post.id}">❤️ ${post.likes}</span>
         <span class="post-action">💬 Reply</span>
-        <span class="post-action">🔄 Share</span>
+        <span class="post-action" data-action="reletter" data-id="${post.id}">🔁 Reletter ${post.reletters || 0}</span>
         ${isOwn ? `<span class="post-action" data-action="delete" data-id="${post.id}">🗑️ Delete</span>` : ''}
       </div>
     </div>
@@ -453,16 +485,16 @@ async function likePost(postId) {
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      alert(data.error || 'Failed to like post');
+      alert(data.error || 'Failed to like letter');
     }
   } catch (error) {
-    console.error('Error liking post:', error);
+    console.error('Error liking letter:', error);
     alert('Connection error');
   }
 }
 
 async function deletePost(postId) {
-  if (!confirm('Delete this post?')) return;
+  if (!confirm('Delete this letter?')) return;
   try {
     const response = await fetch(`${API_BASE}/posts/${postId}`, {
       method: 'DELETE',
@@ -471,10 +503,27 @@ async function deletePost(postId) {
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      alert(data.error || 'Failed to delete post');
+      alert(data.error || 'Failed to delete letter');
     }
   } catch (error) {
-    console.error('Error deleting post:', error);
+    console.error('Error deleting letter:', error);
+    alert('Connection error');
+  }
+}
+
+async function reletterPost(postId) {
+  try {
+    const response = await fetch(`${API_BASE}/posts/${postId}/reletter`, {
+      method: 'POST',
+      headers: authHeaders()
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to reletter');
+    }
+  } catch (error) {
+    console.error('Error relettering:', error);
     alert('Connection error');
   }
 }
@@ -609,7 +658,7 @@ function renderChat() {
   elements.chatMessages.innerHTML = messages.map(msg => `
     <div class="chat-message">
       <span class="author">@${escapeHtml(msg.username)}</span>
-      <span>${escapeHtml(msg.content)}</span>
+      <span class="markdown-content">${renderMarkdown(msg.content)}</span>
       <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(msg.created_at))}</span>
     </div>
   `).join('');
@@ -738,16 +787,18 @@ async function loadUserPosts() {
       return;
     }
     const response = await fetch(`${API_BASE}/users/${state.currentUser.id}/posts`);
-    if (!response.ok) throw new Error('Failed to load user posts');
+    if (!response.ok) throw new Error('Failed to load user letters');
     const posts = await response.json();
     if (!posts.length) {
-      userPosts.innerHTML = '<p class="empty-state">No posts yet.</p>';
+      userPosts.innerHTML = '<p class="empty-state">No letters yet.</p>';
       return;
     }
     userPosts.innerHTML = posts.map(post => {
       const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
+      const isReletter = post.type === 'reletter';
+      const reletterHeader = isReletter ? `<div class="reletter-header">🔁 Reletter from @${escapeHtml(post.original_username || '')}</div>` : '';
       return `
-      <div class="post">
+      <div class="post ${isReletter ? 'reletter' : ''}">
         <div class="post-header">
           <div class="post-avatar">${avatar}</div>
           <div>
@@ -755,6 +806,7 @@ async function loadUserPosts() {
             <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(post.created_at))}</span>
           </div>
         </div>
+        ${reletterHeader}
         <div class="post-content">${escapeHtml(post.content)}</div>
         <div class="post-actions">
           <span class="post-action">❤️ ${post.likes}</span>
@@ -762,7 +814,7 @@ async function loadUserPosts() {
       </div>
     `}).join('');
   } catch (error) {
-    console.error('Error loading user posts:', error);
+    console.error('Error loading user letters:', error);
   }
 }
 
@@ -801,7 +853,7 @@ function renderSearchResults(data, q) {
     html = '<p class="empty-state">No results found.</p>';
   } else {
     if (postResults.length) {
-      html += '<h3 class="search-section">Posts</h3>' + postResults.map(post => {
+      html += '<h3 class="search-section">Letters</h3>' + postResults.map(post => {
         const avatar = escapeHtml(post.avatar || (post.username?.charAt(0) || '?').toUpperCase());
         return `
         <div class="post">
@@ -824,7 +876,7 @@ function renderSearchResults(data, q) {
       html += '<h3 class="search-section">Messages</h3>' + messageResults.map(msg => `
         <div class="chat-message">
           <span class="author">#${escapeHtml(msg.channel)} @${escapeHtml(msg.username)}</span>
-          <span>${escapeHtml(msg.content)}</span>
+          <span class="markdown-content">${renderMarkdown(msg.content)}</span>
           <span style="color: #888; font-size: 12px; margin-left: 8px">${formatTime(new Date(msg.created_at))}</span>
         </div>
       `).join('');

@@ -112,6 +112,7 @@ app.post('/api/posts', requireAuth, (req, res) => {
     avatar: user.avatar || avatarFor(user.username),
     content: content.trim(),
     likes: 0,
+    reletters: 0,
     created_at: now()
   };
   posts.push(post);
@@ -151,6 +152,30 @@ app.delete('/api/posts/:id', requireAuth, (req, res) => {
   posts.splice(idx, 1);
   io.emit('post_deleted', post.id);
   res.sendStatus(204);
+});
+
+app.post('/api/posts/:id/reletter', requireAuth, (req, res) => {
+  const original = posts.find(p => p.id === Number(req.params.id));
+  if (!original) return res.status(404).json({ error: 'Post not found' });
+  const user = req.user;
+  const reletter = {
+    id: nextPostId++,
+    type: 'reletter',
+    user_id: user.id,
+    username: user.username,
+    avatar: user.avatar || avatarFor(user.username),
+    content: original.content,
+    reletter_of: original.id,
+    original_username: original.username,
+    likes: 0,
+    reletters: 0,
+    created_at: now()
+  };
+  original.reletters = (original.reletters || 0) + 1;
+  posts.push(reletter);
+  io.emit('new_post', reletter);
+  io.emit('post_relettered', { id: original.id, reletters: original.reletters });
+  res.status(201).json(reletter);
 });
 
 app.get('/api/messages/:channel', (req, res) => {
